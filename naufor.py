@@ -2,12 +2,14 @@
    - https://www.naufor.ru/
 """
 __author__ = 'ok_kir'
-__version__ = '0.00.2'
+__version__ = '0.00.3'
 
 # ================================================================================
+import csv
+import os
 import requests
 from bs4 import BeautifulSoup
-import csv
+
 # import pandas
 
 # --------------------------------------------------------------------------------
@@ -19,9 +21,11 @@ REQUEST_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:92.0) Gecko/20100101 Firefox/92.0',
     'Accept': '*/*'
 }  # Заголовки для эмулирования работы браузера
-PATH_FOR_SAVE = r'./members.csv'
 
-ENTERPRISES = {'датабанк ао', 'сургутгазстрой ук ооо', 'стоунхедж ук ооо'}  # Список отслеживаемых компаний
+PATH_FOR_SAVE = 'members.csv'
+PATH_FOR_LOAD = 'members.csv'
+
+ENTERPRISES = ['датабанк ао', 'сургутгазстрой ук ооо', 'стоунхедж ук ооо']  # Список отслеживаемых компаний
 
 
 # --------------------------------------------------------------------------------
@@ -57,7 +61,6 @@ def get_all_company(html, host=HOST):
     for link in links:
         name = link.get_text(strip=True)  # Имя компании участницы СРО
         href = host + link.get('href').strip()  # Адрес страницы с подробной информацией о компании
-        temp = link.get('href')
         company[name] = href
     return company
 
@@ -83,24 +86,35 @@ def get_verification_data(html):
     return info
 
 
-def check_entry_company(company):
+def check_entry_company(all_company, enterprises):
     """Сортировка компаний и отсев не указанных для отслеживания
 
-    :param company: Словарь всех компаний профучастников СРО
+    :param all_company: Словарь всех компаний профучастников СРО
+    :param enterprises: Список интересующих нас компаний - участников СРО ([!] - обязательно в нижнем регистре)
     :return: словарь с именем компании в качестве ключа, значения - адрес
     """
     members = {}
     # ToDo - Можно использовать бинарный поиск (на сайте идёт упорядочивание по алфавиту).
     # ToDo - Можно сделать параллельный скроллинг (существенно ускорит скрипт)
-    for member in ENTERPRISES:
-        for firm in company:
+    for member in enterprises:
+        for firm in all_company:
             if firm.lower().find(member) != -1:  # if firm.lower() == member.lower() # Более жёсткое условие
-                members[firm] = company[firm]
+                members[firm] = all_company[firm]
     return members
 
 
 # --------------------------------------------------------------------------------
-def save_file(data, path=PATH_FOR_SAVE):
+# Функции для работы с файлами
+def read_data_file(path=PATH_FOR_LOAD):
+    members = []
+    with open(path, 'r') as csv_file:
+        reader = csv.DictReader(csv_file, delimiter=';')
+        for line in reader:
+            members.append(line['Компания'].strip().lower())
+    return members
+
+
+def save_data_file(data, path=PATH_FOR_SAVE):
     """Сохранение файла с результатами проверки
 
     :param data:
@@ -116,17 +130,30 @@ def save_file(data, path=PATH_FOR_SAVE):
             writer.writerow([company, data[company]['content'], data[company]['href']])
 
 
+# --------------------------------------------------------------------------------
+
 def main_for_parse(url=GL_URL):
     """Основная функция парсинга СРО НАУФОР
 
     :param url:
     :return:
     """
+
+    # Формирование списка интересующих компаний
+    # Если файл ранее существовал, то формируем список из него, иначе - используем глобальный список
+    if os.path.exists(PATH_FOR_LOAD) and os.path.isfile(PATH_FOR_LOAD):
+        enterprises = read_data_file()
+        print('[*] - Список компаний загружен из файла')
+    else:
+        enterprises = ENTERPRISES
+        print('[*] - Список компаний взят из скрипта')
+
     soup = get_html(url)
     if soup is not None:
         result = {}
         company = get_all_company(soup)
-        members = check_entry_company(company)
+        print('[*] - Список всех членов СРО сформирован')
+        members = check_entry_company(company, enterprises=enterprises)
         for name in members.keys():
             url = members.get(name)
             html = get_html(url)
@@ -139,7 +166,7 @@ def main_for_parse(url=GL_URL):
             else:
                 # Ответ от сайта != 200
                 result[name] = 'Не удалось обновить информацию - проверьте адрес'
-        save_file(result)
+        save_data_file(result)
         # print(*result.items(), sep='\n')
     else:
         # Ответ от сайта != 200
@@ -147,6 +174,6 @@ def main_for_parse(url=GL_URL):
 
 
 # --------------------------------------------------------------------------------
-print('[*] Начало работы скрипта', '=' * 50, sep='\n')
+print('[*] - Начало работы скрипта', '=' * 50, sep='\n')
 main_for_parse()
-print('[*] Окончание работы скрипта', '=' * 50, sep='\n')
+print('[*] - Окончание работы скрипта', '=' * 50, sep='\n')
