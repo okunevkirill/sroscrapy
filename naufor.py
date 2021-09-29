@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Модуль парсинга профучастников СРО НАУФОР
    - https://www.naufor.ru/
 """
@@ -172,7 +173,7 @@ def get_dataframe(members):
 # Функции для работы с файлами
 def read_data_file(path=PATH_FOR_LOAD):
     members = []
-    with open(path, 'r') as csv_file:
+    with open(path, 'r', encoding='utf-8') as csv_file:
         reader = csv.DictReader(csv_file, delimiter=';')
         for line in reader:
             members.append(line[TABLE_HEADERS[0]].strip())
