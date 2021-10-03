@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Модуль парсинга профучастников СРО НАУФОР
-   - https://www.naufor.ru/
+""" The module is designed for parsing the site of professional members
+    of a self-regulatory organization in the Russian financial market NAUFOR.
+   site: https://www.naufor.ru/
 """
+
 __author__ = 'ok_kir'
-__version__ = '0.00.5'
+__version__ = '0.00.6'
 
 # ================================================================================
 import csv
@@ -17,18 +19,28 @@ from bs4 import BeautifulSoup
 import xlsxwriter
 
 # --------------------------------------------------------------------------------
-# Константы модуля
-HOST = r"https://www.naufor.ru"  # Адрес основной страницы СРО
-URL_PAGE = r"https://www.naufor.ru/tree.asp?n=13092"  # Адрес страницы парсинга
-REQUEST_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:92.0) Gecko/20100101 Firefox/92.0',
-    'Accept': '*/*'
-}  # Заголовки для эмулирования работы браузера
-PATH_FOR_SAVE = 'members.csv'
-PATH_FOR_LOAD = 'members.csv'
-ENTERPRISES = []  # Список отслеживаемых компаний
-TABLE_HEADERS = ('Компания', 'Информация о проверках', 'Адрес источника')
-NUMBER_OF_ALL_PROC = 42  # Число процессов для параллельного парсинга
+# Connection constants
+HOST = r"https://www.naufor.ru"  # SRO main page address
+URL_PAGE = r"https://www.naufor.ru/tree.asp?n=13092"  # Parsing page URL
+BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:92.0) Gecko/20100101 Firefox/92.0",
+    "Accept": "*/*"
+}
+# ---------------------------------------------
+# Constants for files
+PATH_INP_COMPANIES = "inp_lst_companies.csv"
+TABLE_HEADERS = ('Компания', 'Информация о проверках', "Дата последней проверки", 'Адрес источника')
+MSG_NO_COMPANY = "Компании нет в списках членов СРО"
+MSG_NO_URL = "Не удалось обновить информацию - проверьте адрес"
+# ---------------------------------------------
+# Xlsx formatting constants
+XLSX_HEADING = {'bold': True, 'font_color': 'black', 'font_size': '14', 'valign': 'vcenter', 'align': 'center',
+                'text_wrap': 'True', 'border': 2}
+XLSX_DEFAULT = {'align': 'left', 'valign': 'vcenter', 'text_wrap': 'True'}
+XLSX_MARKER = {"bg_color": 'red', 'align': 'left', 'valign': 'vcenter'}
+# ---------------------------------------------
+# Constants for multithreading
+NUMBER_OF_ALL_PROC = 42  # Number of worker processes for parallel parsing
 
 
 # --------------------------------------------------------------------------------
@@ -43,15 +55,15 @@ class ParsingError(Exception):
 
     def __str__(self):
         if self.msg:
-            return f"[!] ParsingError: {self.msg}"
+            return f"[!] ParsingError - {self.msg}"
         else:
             return "[!] ParsingError encountered - check your parsing logic and addresses"
 
 
 # --------------------------------------------------------------------------------
-# Ограничения и функции для тестирования и оценки модуля
+# Functions for testing and evaluating a module
 def timer(func):
-    """Декоратор для получения времени работы функции"""
+    """Decorator for getting the running time of a function"""
 
     @wraps(func)
     def wrapper(*args):
@@ -73,7 +85,7 @@ def get_html(url, params=None):
     :return: Если информация с сайта была получена возвращается строка, иначе возвращается None
     """
 
-    r = requests.get(url, headers=REQUEST_HEADERS, params=params)
+    r = requests.get(url, headers=BROWSER_HEADERS, params=params)
     # [*] - Так как весь скрипт работает только на получение информации (без передачи доп. параметров на сайт), то
     # использую строгую проверку на корректность ответа (иначе использовал бы `r.ok`)
     if r.status_code == 200:
@@ -105,21 +117,29 @@ def get_verification_data(html):
     """Получения информации о результатах проверки
 
     :param html: Конвертированный html код
-    :return: Возвращается строка с информацией о результатах проверки
+    :return:
     """
-    string_begin = '6 Сведения о проведенных саморегулируемой организацией в сфере финансового рынка проверках'
-    string_end = '7 Сведения о применении саморегулируемой организацией в сфере'
 
     soup = BeautifulSoup(html, 'lxml')
-    res_text = soup.text
-    index_begin = res_text.find(string_begin) + len(string_begin)
-    index_end = res_text.find(string_end, index_begin)
-    info = res_text[index_begin: index_end].replace('* * *', '').replace('\n\n\n', '\n').strip('\n')
+    res = ''
+    flag_info = False
+    date = ''
+    for string in soup.find_all('tr'):
+        info = string.get_text()
+        if info.find('6 Сведения') != -1:
+            flag_info = True
+        elif flag_info and info.find('7 Сведения') != -1:
+            break
 
-    # Если строка состоит только из символов конца строки - проверок СРО не было
-    if len(info) == info.count('\n'):
-        info = 'Проверок СРО не было'
-    return info
+        if info.strip().replace('\n', '').replace('\t', '').replace('\r', '') == '':
+            info = 'Проверок СРО не было'
+
+        if flag_info:
+            res += info.replace('* * *', '').replace('\n\n\n', '')
+            if info.find('Дата окончания') != -1:
+                date = info.replace('Дата окончания', '').strip().strip('\n')
+
+    return res, date
 
 
 def check_entry_company(all_company, enterprises):
@@ -141,15 +161,15 @@ def check_entry_company(all_company, enterprises):
 
 def parsing_info(url):
     if url is None:
-        return "Компании нет в списках членов СРО"
+        return MSG_NO_COMPANY, ''
 
     html = get_html(url)
     if html is None:
         # Ответ от сайта != 200
-        return "Не удалось обновить информацию - проверьте адрес"
+        return MSG_NO_URL, ''
     else:
-        content = get_verification_data(html)
-        return content
+        content, date = get_verification_data(html)
+        return content, date
 
 
 def get_dataframe(info_members):
@@ -162,23 +182,29 @@ def get_dataframe(info_members):
     res = {'name': info_members[0], 'href': info_members[1]}
     with Pool(NUMBER_OF_ALL_PROC) as prc:
         temp = prc.map(parsing_info, info_members[1])
-    res['info'] = temp
+    res['info'] = [x[0] for x in temp]
+    res['date'] = [x[1] for x in temp]
 
     return res
 
 
 # --------------------------------------------------------------------------------
 # Функции для работы с файлами
-def read_data_file(path=PATH_FOR_LOAD):
+def read_data_file(path=PATH_INP_COMPANIES):
     members = []
+    date = []
     with open(path, 'r', encoding='cp1251') as csv_file:
         reader = csv.DictReader(csv_file, delimiter=';')
-        for line in reader:
-            members.append(line[TABLE_HEADERS[0]].strip())
-    return members
+        try:
+            for line in reader:
+                members.append(line[TABLE_HEADERS[0]].strip())
+                date.append(line[TABLE_HEADERS[2]].strip())
+        except KeyError:
+            raise ParsingError("Check the headers in the raw data file")
+    return members, date
 
 
-def save_file_xlsx(dataframe, path="Результаты.xlsx"):
+def save_file_xlsx(dataframe, inp_date, path="Результаты.xlsx"):
     """Сохранение в xlsx файл"""
 
     workbook = xlsxwriter.Workbook(path)
@@ -186,39 +212,38 @@ def save_file_xlsx(dataframe, path="Результаты.xlsx"):
     # ----------------------------------------
     # Добавление форматирования для xlsx
     worksheet.set_default_row(40)  # Высота строк
-    heading_format = workbook.add_format(
-        {
-            'bold': True,
-            'font_color': 'black',
-            'font_size': '14',
-            'valign': 'vcenter',
-            'align': 'center'
-        }
-    )
-    text_format = workbook.add_format(
-        {
-            'align': 'left',
-            'valign': 'vcenter'
-            # 'text_wrap': 'True'
-        }
-    )
+    heading_format = workbook.add_format(XLSX_HEADING)
+    default_format = workbook.add_format(XLSX_DEFAULT)
+    marker_format = workbook.add_format(XLSX_MARKER)
     # ----------------------------------------
     # Формирование заголовков
     worksheet.write('A1', TABLE_HEADERS[0], heading_format)
     worksheet.write('B1', TABLE_HEADERS[1], heading_format)
     worksheet.write('C1', TABLE_HEADERS[2], heading_format)
+    worksheet.write('D1', TABLE_HEADERS[3], heading_format)
     # ----------------------------------------
     # Ширина столбцов
-    worksheet.set_column('A:A', 30)
-    worksheet.set_column('A:B', 40)
-    worksheet.set_column('C:C', 50)
+    worksheet.set_column('A:A', 20)
+    worksheet.set_column('A:B', 30)
+    worksheet.set_column('C:C', 20)
+    worksheet.set_column('D:D', 45)
     # ----------------------------------------
     row, col = 1, 0
     for index in range(len(dataframe["name"])):
-        name, info, href = dataframe["name"][index], dataframe["info"][index], dataframe["href"][index]
-        worksheet.write(row, col, name, text_format)
-        worksheet.write(row, col + 1, info, text_format)
-        worksheet.write(row, col + 2, href, text_format)
+        name, info, date, href = dataframe["name"][index], dataframe["info"][index], dataframe["date"][index], \
+                                 dataframe["href"][index]
+
+        worksheet.write(row, col, name, default_format)
+        if info in (MSG_NO_URL, MSG_NO_COMPANY):
+            worksheet.write(row, col + 1, info, marker_format)
+        else:
+            worksheet.write(row, col + 1, info, default_format)
+
+        if date != inp_date[index].strip():
+            worksheet.write(row, col + 2, date, marker_format)
+        else:
+            worksheet.write(row, col + 2, date, default_format)
+        worksheet.write(row, col + 3, href, default_format)
         row += 1
     workbook.close()
 
@@ -234,43 +259,43 @@ def main_for_parse(url=URL_PAGE):
 
     # Формирование списка интересующих компаний
     # Если файл ранее существовал, то формируем список из него, иначе - используем глобальный список
-    if os.path.exists(PATH_FOR_LOAD) and os.path.isfile(PATH_FOR_LOAD):
-        enterprises = read_data_file()
-        print("[*] - Список компаний загружен из файла")
-    else:
-        enterprises = ENTERPRISES
-        print("[*] - Список компаний взят из скрипта")
-    # --------------------------------------------------
     try:
+        if os.path.exists(PATH_INP_COMPANIES) and os.path.isfile(PATH_INP_COMPANIES):
+            enterprises, inp_date = read_data_file()
+            if not enterprises:
+                raise ParsingError("Check the configuration of the company listing file")
+            print("[*] - Список компаний был загружен из файла")
+
+        else:
+            raise ParsingError("Check file path and file name")
+        # ---------------------------------------------
         soup = get_html(url)
         if soup is None:
             raise ParsingError("HTTP status code is not 200")
         else:
             print("[*] - Ответ от сайта получен")
-
+        # ---------------------------------------------
         companies = get_all_companies(soup)
         if not companies:
             raise ParsingError("Failed to get the list of SRO members")
         else:
             print("[*] - Список членов СРО сформирован")
-
+        # ---------------------------------------------
         info_members = check_entry_company(companies, enterprises=enterprises)
-        # print(info_members)
         if not info_members[0]:  # Если компаний нет
             raise ParsingError("The list of companies to search is empty")
         else:
             print("[*] - Список искомых компаний сформирован")
 
         dataframe = get_dataframe(info_members)
-        save_file_xlsx(dataframe)
-    except ParsingError:
-        print("[!] Проверти ИД для скрипта")
+        save_file_xlsx(dataframe, inp_date)
+    except ParsingError as err:
+        print("[!] - Check the data for the script")
+        print("-" * 50, err, "-" * 50, sep='\n')
 
 
 # --------------------------------------------------------------------------------
-print("[!] - Начало работы скрипта", "=" * 50, sep="\n")
-main_for_parse()
-print("[!] - Окончание работы скрипта", "=" * 50, sep="\n")
-
-# temp = {'name': ['Датабанк АО', 'СтоунХедж УК ООО', 'Сургутгазстрой УК ООО', 'Евро Фин Траст УК ООО', 'ЗЕНИТ Банк ПАО', 'Доминвест УК ООО', 'ВербаКапитал Инвестиционное партнерство ООО', 'Неизвестная компания'], 'href': ['https://www.naufor.ru/compcard.asp?compid=5228', 'https://www.naufor.ru/compcard.asp?compid=6819', 'https://www.naufor.ru/compcard.asp?compid=6192', 'https://www.naufor.ru/compcard.asp?compid=6122', 'https://www.naufor.ru/compcard.asp?compid=3348', 'https://www.naufor.ru/compcard.asp?compid=7066', 'https://www.naufor.ru/compcard.asp?compid=6026', ''], 'info': ['6.1 Дата начала и дата окончания проверки\nДата начала\n01.11.2016\nДата окончания\n30.11.2016\n6.2 Основание проведения проверки\nПриказ Президента НАУФОР\n6.3 Предмет проверки\nПроверка соблюдения требований РФ о противодействии неправомерному использования инсайдерской информации и манипулированию рынк\n6.4 Результат проверки (нарушения, выявленные в ходе проведенной проверки (при наличии)\nВыявлены нарушения соблюдения требований РФ о противодействии неправомерному использованию инсайдерской информации и манипулиро\n\n6.1 Дата начала и дата окончания проверки\nДата начала\n07.06.2021\nДата окончания\n05.08.2021\n6.2 Основание проведения проверки\nПриказ Президента НАУФОР\n6.3 Предмет проверки\nПроверка соблюдения требований действующих базовых и внутренних стандартов НАУФОР, включенных в приоритетные области контроля НАУФОР на 2021 год\n6.4 Результат проверки (нарушения, выявленные в ходе проведенной проверки (при наличии)\nВыявлены нарушения внутреннего стандарта НАУФОР "Информирование клиента о рисках", базового стандарта совершения управляющим операций на финансовом рынке и базового стандарта совершения брокером операций на финансовом рынке.', 'Проверок СРО не было', '6.1 Дата начала и дата окончания проверки\nДата начала\n11.03.2020\nДата окончания\n09.04.2020\n6.2 Основание проведения проверки\nПриказ Президента НАУФОР\n6.3 Предмет проверки\nПроверка соблюдения внутренних стандартов деятельности управляющих компаний паевых инвестиционных фондов НАУФОР в части соблюдения Стандарта 1 "Предотвращение конфликта интересов" и Стандарта 3 "Управление рисками управляющей компании"\n6.4 Результат проверки (нарушения, выявленные в ходе проведенной проверки (при наличии)\nНарушений не выявлено', '6.1 Дата начала и дата окончания проверки\nДата начала\n19.02.2020\nДата окончания\n19.03.2020\n6.2 Основание проведения проверки\nПриказ Президента НАУФОР\n6.3 Предмет проверки\nПроверка соблюдения внутренних стандартов деятельности управляющих компаний паевых инвестиционных фондов НАУФОР в части соблюдения Стандарта 1 "Предотвращение конфликта интересов" и Стандарта 3 "Управление рисками управляющей компании".\n6.4 Результат проверки (нарушения, выявленные в ходе проведенной проверки (при наличии)\nНарушений не выявлено', '6.1 Дата начала и дата окончания проверки\nДата начала\n28.10.2019\nДата окончания\n26.11.2019\n6.2 Основание проведения проверки\nПриказ Президента НАУФОР\n6.3 Предмет проверки\nПроверка соблюдения базового стандарта совершения брокером операций на финансовом рынке по вопросам условий и порядка использования денежных средств и ценных бумаг клиентов в интересах брокера; базового стандарта совершения управляющим операций на финансовом рынке по вопросам условий и порядка определения инвестиционного профиля клиента; базового стандарта совершения депозитарием операций на финансовом рынке по вопросам процедур, связанных с отражением депозитарных операций в системе учета \n6.4 Результат проверки (нарушения, выявленные в ходе проведенной проверки (при наличии)\nНарушений не выявлено', 'Проверок СРО не было', '6.1 Дата начала и дата окончания проверки\nДата начала\n29.04.2019\nДата окончания\n28.05.2019\n6.2 Основание проведения проверки\nПриказ Президента НАУФОР\n6.3 Предмет проверки\nСоблюдение внутреннего стандарта НАУФОР порядка определения стоимости чистых активов паевого инвестиционного фонда и стоимости инвестиционного пая\n6.4 Результат проверки (нарушения, выявленные в ходе проведенной проверки (при наличии)\nНарушений не выявлено', 'Компании нет в списках членов СРО']}
-# save_file_xlsx(temp, 'temp.xlsx')
+if __name__ == '__main__':
+    print("[!] - Начало работы скрипта", "=" * 50, sep="\n")
+    main_for_parse()
+    print("[!] - Окончание работы скрипта", "=" * 50, sep="\n")
