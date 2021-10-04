@@ -5,7 +5,7 @@
 """
 
 __author__ = 'ok_kir'
-__version__ = '0.00.6'
+__version__ = '0.00.7'
 
 # ================================================================================
 import csv
@@ -62,6 +62,7 @@ class ParsingError(Exception):
 
 # --------------------------------------------------------------------------------
 # Functions for testing and evaluating a module
+
 def timer(func):
     """Decorator for getting the running time of a function"""
 
@@ -78,46 +79,43 @@ def timer(func):
 
 # --------------------------------------------------------------------------------
 def get_html(url, params=None):
-    """Получение содержимого страницы по указанному url
+    """Retrieving the page content at the specified url
 
-    :param url: Адрес страницы для парсинга.
-    :param params: Дополнительный параметр для анализа нескольких однотипных страниц
-    :return: Если информация с сайта была получена возвращается строка, иначе возвращается None
+    :param url: Parsing page address
+    :param params: Additional parameter for the analysis of several pages of the same type
+    :return: If information from the site was received, the html code is returned, otherwise None is returned
     """
 
     r = requests.get(url, headers=BROWSER_HEADERS, params=params)
-    # [*] - Так как весь скрипт работает только на получение информации (без передачи доп. параметров на сайт), то
-    # использую строгую проверку на корректность ответа (иначе использовал бы `r.ok`)
     if r.status_code == 200:
-        # Конвертируем полученные данные в строку с кодировкой указанной на сайте или utf-8 (по умолчанию)
         return r.text
     return None
 
 
 def get_all_companies(html, host=HOST):
-    """Получение списка всех компаний профучастников СРО.
+    """Obtaining a list of all companies of professional SRO participants
 
-    :param html: Конвертированный html код.
-    :param host: Адрес основной страницы сайта
-    :return: Возвращается словарь всех компаний профучастников СРО с адресами на результат проверки.
+    :param html: html code
+    :param host: Site main page address
+    :return: A dictionary of all professional SRO members is returned with addresses based on the results of the check
     """
+
     soup = BeautifulSoup(html, 'lxml')
-    # Пользуюсь тем что на html странице перечень компаний реализован
-    # в виде ссылок <a> с классом <link-ajax>
+
     links = soup.find_all('a', class_='link-ajax')
     companies = {}
     for link in links:
-        name = link.get_text(strip=True)  # Имя компании участницы СРО
-        href = host + link.get('href').strip()  # Адрес страницы с подробной информацией о компании
+        name = link.get_text(strip=True)
+        href = host + link.get('href').strip()
         companies[name] = href
     return companies
 
 
 def get_verification_data(html):
-    """Получения информации о результатах проверки
+    """Obtaining information about the results of the check
 
-    :param html: Конвертированный html код
-    :return:
+    :param html: html code
+    :return: A tuple with information about checks and the date of the last check
     """
 
     soup = BeautifulSoup(html, 'lxml')
@@ -143,16 +141,16 @@ def get_verification_data(html):
 
 
 def check_entry_company(all_company, enterprises):
-    """Сортировка компаний и отсев не указанных для отслеживания
+    """Sorting companies and filtering out those not listed for tracking
 
-    :param all_company: Словарь всех компаний профучастников СРО
-    :param enterprises: Список интересующих нас компаний - участников СРО
-    :return: Массив списков с именами компании в 0 столбце а адресами в 1
+    :param all_company: Dictionary of all companies of professional SRO participants
+    :param enterprises: List of required companies
+    :return: A tuple of lists with company names in column 0 and addresses in 1
     """
     res = ([], [])
     for idx, member in enumerate(enterprises):
         res[0].append(member)
-        res[1].append(None)  # [*] - Устанавливаем для отслеживания компаний отсутствующих в списке членов СРО
+        res[1].append(None)  # [*] - We install to track companies that are not on the list of SRO members
         for firm in all_company:
             if firm.lower().find(member.lower()) != -1:
                 res[1][idx] = all_company[firm]
@@ -165,7 +163,7 @@ def parsing_info(url):
 
     html = get_html(url)
     if html is None:
-        # Ответ от сайта != 200
+        # Reply from the site != 200
         return MSG_NO_URL, ''
     else:
         content, date = get_verification_data(html)
@@ -173,26 +171,30 @@ def parsing_info(url):
 
 
 def get_dataframe(info_members):
-    """Функция формирования единого набора данных - результат всего парсинга
+    """The function of forming a single data set based on the analysis results
 
-    :param info_members: Массив списков с именами компании в 0 столбце а адресами в 1
-    :return: Словарь с информацией о членах СРО
+    :param info_members: A tuple of lists with company names in column 0 and addresses in 1
+    :return: Dictionary with information about SRO members for writing in xlsx
     """
 
     res = {'name': info_members[0], 'href': info_members[1]}
     with Pool(NUMBER_OF_ALL_PROC) as prc:
-        temp = prc.map(parsing_info, info_members[1])
-    res['info'] = [x[0] for x in temp]
-    res['date'] = [x[1] for x in temp]
+        content = prc.map(parsing_info, info_members[1])
+    res['info'] = [x[0] for x in content]
+    res['date'] = [x[1] for x in content]
 
     return res
 
 
 # --------------------------------------------------------------------------------
-# Функции для работы с файлами
+# Functions for working with files
 def read_data_file(path=PATH_INP_COMPANIES):
-    members = []
-    date = []
+    """The function of reading the initial data for the script to work
+
+    :param path: The path to the file
+    :return: A tuple from the list of required companies and the dates of the last checks
+    """
+    members, date = [], []
     with open(path, 'r', encoding='cp1251') as csv_file:
         reader = csv.DictReader(csv_file, delimiter=';')
         try:
@@ -205,7 +207,13 @@ def read_data_file(path=PATH_INP_COMPANIES):
 
 
 def save_file_xlsx(dataframe, inp_date, path="Результаты.xlsx"):
-    """Сохранение в xlsx файл"""
+    """The function of creating an xlsx file with the result of the script
+
+    :param dataframe: Dictionary with information about SRO members
+    :param inp_date: Initial data about the date of the last check (from a csv file)
+    :param path: Result file save address
+    :return: None
+    """
 
     workbook = xlsxwriter.Workbook(path)
     worksheet = workbook.add_worksheet("НАУФОР")
@@ -251,14 +259,12 @@ def save_file_xlsx(dataframe, inp_date, path="Результаты.xlsx"):
 # --------------------------------------------------------------------------------
 @timer
 def main_for_parse(url=URL_PAGE):
-    """Основная функция парсинга СРО НАУФОР
+    """The main function of parsing SRO NAUFOR
 
-    :param url:
-    :return:
+    :param url: Parsing page URL
+    :return: None
     """
 
-    # Формирование списка интересующих компаний
-    # Если файл ранее существовал, то формируем список из него, иначе - используем глобальный список
     try:
         if os.path.exists(PATH_INP_COMPANIES) and os.path.isfile(PATH_INP_COMPANIES):
             enterprises, inp_date = read_data_file()
@@ -282,7 +288,7 @@ def main_for_parse(url=URL_PAGE):
             print("[*] - Список членов СРО сформирован")
         # ---------------------------------------------
         info_members = check_entry_company(companies, enterprises=enterprises)
-        if not info_members[0]:  # Если компаний нет
+        if not info_members[0]:  # If there are no companies
             raise ParsingError("The list of companies to search is empty")
         else:
             print("[*] - Список искомых компаний сформирован")
