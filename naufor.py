@@ -5,7 +5,7 @@
 """
 
 __author__ = 'ok_kir'
-__version__ = '0.00.7'
+__version__ = '0.00.8'
 
 # ================================================================================
 import csv
@@ -32,15 +32,22 @@ PATH_INP_COMPANIES = "inp_lst_companies.csv"
 TABLE_HEADERS = ('Компания', 'Информация о проверках', "Дата последней проверки", 'Адрес источника')
 MSG_NO_COMPANY = "Компании нет в списках членов СРО"
 MSG_NO_URL = "Не удалось обновить информацию - проверьте адрес"
+MSG_NO_CHECKS_SRO = "Проверок СРО не было"
 # ---------------------------------------------
 # Xlsx formatting constants
 XLSX_HEADING = {'bold': True, 'font_color': 'black', 'font_size': '14', 'valign': 'vcenter', 'align': 'center',
                 'text_wrap': 'True', 'border': 2}
 XLSX_DEFAULT = {'align': 'left', 'valign': 'vcenter', 'text_wrap': 'True'}
-XLSX_MARKER = {"bg_color": 'red', 'align': 'left', 'valign': 'vcenter'}
+XLSX_MARKER_RED = {"bg_color": 'red', 'align': 'left', 'valign': 'vcenter'}
+XLSX_MARKER_GREEN = {"bg_color": 'green', 'align': 'left', 'valign': 'vcenter'}
 # ---------------------------------------------
 # Constants for multithreading
 NUMBER_OF_ALL_PROC = 42  # Number of worker processes for parallel parsing
+# ---------------------------------------------
+# Constants for parsing pages with scan results
+START_PHRASE = "6 Сведения"
+END_PHRASE = "7 Сведения"
+DATE_PHRASE = "Дата окончания"
 
 
 # --------------------------------------------------------------------------------
@@ -67,9 +74,9 @@ def timer(func):
     """Decorator for getting the running time of a function"""
 
     @wraps(func)
-    def wrapper(*args):
+    def wrapper(*args, **kwargs):
         start_timer = perf_counter()
-        return_value = func(*args)
+        return_value = func(*args, **kwargs)
         stop_timer = perf_counter()
         print(f"[*] Время работы '{func.__name__}': {stop_timer - start_timer}")
         return return_value
@@ -123,19 +130,21 @@ def get_verification_data(html):
     flag_info = False
     date = ''
     for string in soup.find_all('tr'):
+        # Condition order is important
         info = string.get_text()
-        if info.find('6 Сведения') != -1:
-            flag_info = True
-        elif flag_info and info.find('7 Сведения') != -1:
+        if flag_info and END_PHRASE in info:
             break
 
-        if info.strip().replace('\n', '').replace('\t', '').replace('\r', '') == '':
-            info = 'Проверок СРО не было'
+        if not info.strip():
+            info = MSG_NO_CHECKS_SRO
 
         if flag_info:
             res += info.replace('* * *', '').replace('\n\n\n', '')
-            if info.find('Дата окончания') != -1:
-                date = info.replace('Дата окончания', '').strip().strip('\n')
+            if DATE_PHRASE in info:
+                date = info.replace(DATE_PHRASE, '').strip()
+
+        if START_PHRASE in info:
+            flag_info = True
 
     return res, date
 
@@ -222,7 +231,8 @@ def save_file_xlsx(dataframe, inp_date, path="Результаты.xlsx"):
     worksheet.set_default_row(40)  # Высота строк
     heading_format = workbook.add_format(XLSX_HEADING)
     default_format = workbook.add_format(XLSX_DEFAULT)
-    marker_format = workbook.add_format(XLSX_MARKER)
+    marker_format_red = workbook.add_format(XLSX_MARKER_RED)
+    marker_format_green = workbook.add_format(XLSX_MARKER_GREEN)
     # ----------------------------------------
     # Формирование заголовков
     worksheet.write('A1', TABLE_HEADERS[0], heading_format)
@@ -243,12 +253,14 @@ def save_file_xlsx(dataframe, inp_date, path="Результаты.xlsx"):
 
         worksheet.write(row, col, name, default_format)
         if info in (MSG_NO_URL, MSG_NO_COMPANY):
-            worksheet.write(row, col + 1, info, marker_format)
+            worksheet.write(row, col + 1, info, marker_format_red)
+        elif info == MSG_NO_CHECKS_SRO:
+            worksheet.write(row, col + 1, info, marker_format_green)
         else:
             worksheet.write(row, col + 1, info, default_format)
 
         if date != inp_date[index].strip():
-            worksheet.write(row, col + 2, date, marker_format)
+            worksheet.write(row, col + 2, date, marker_format_red)
         else:
             worksheet.write(row, col + 2, date, default_format)
         worksheet.write(row, col + 3, href, default_format)
