@@ -5,7 +5,7 @@
 """
 
 __author__ = 'ok_kir'
-__version__ = '0.00.8'
+__version__ = '0.00.9'
 
 # ================================================================================
 import csv
@@ -19,13 +19,15 @@ from bs4 import BeautifulSoup
 import xlsxwriter
 
 # --------------------------------------------------------------------------------
-# Connection constants
+# Connection and parsing constants
 HOST = r"https://www.naufor.ru"  # SRO main page address
 URL_PAGE = r"https://www.naufor.ru/tree.asp?n=13092"  # Parsing page URL
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:92.0) Gecko/20100101 Firefox/92.0",
     "Accept": "*/*"
 }
+WAITING_TIME_REQUESTS = 2
+HTML_ANALYZER = 'lxml'
 # ---------------------------------------------
 # Constants for files
 PATH_INP_COMPANIES = "inp_lst_companies.csv"
@@ -92,11 +94,16 @@ def get_html(url, params=None):
     :param params: Additional parameter for the analysis of several pages of the same type
     :return: If information from the site was received, the html code is returned, otherwise None is returned
     """
-
-    r = requests.get(url, headers=BROWSER_HEADERS, params=params)
-    if r.status_code == 200:
-        return r.text
-    return None
+    res = None
+    try:
+        r = requests.get(url, headers=BROWSER_HEADERS, params=params, timeout=WAITING_TIME_REQUESTS)
+    except requests.Timeout:
+        # Waiting time exceeded
+        pass
+    else:
+        if r.status_code == 200:
+            res = r.text
+    return res
 
 
 def get_all_companies(html, host=HOST):
@@ -107,7 +114,7 @@ def get_all_companies(html, host=HOST):
     :return: A dictionary of all professional SRO members is returned with addresses based on the results of the check
     """
 
-    soup = BeautifulSoup(html, 'lxml')
+    soup = BeautifulSoup(html, HTML_ANALYZER)
 
     links = soup.find_all('a', class_='link-ajax')
     companies = {}
@@ -125,7 +132,7 @@ def get_verification_data(html):
     :return: A tuple with information about checks and the date of the last check
     """
 
-    soup = BeautifulSoup(html, 'lxml')
+    soup = BeautifulSoup(html, HTML_ANALYZER)
     res = ''
     flag_info = False
     date = ''
@@ -227,20 +234,20 @@ def save_file_xlsx(dataframe, inp_date, path="Результаты.xlsx"):
     workbook = xlsxwriter.Workbook(path)
     worksheet = workbook.add_worksheet("НАУФОР")
     # ----------------------------------------
-    # Добавление форматирования для xlsx
-    worksheet.set_default_row(40)  # Высота строк
+    # Adding formatting for xlsx
+    worksheet.set_default_row(40)  # Height of lines
     heading_format = workbook.add_format(XLSX_HEADING)
     default_format = workbook.add_format(XLSX_DEFAULT)
     marker_format_red = workbook.add_format(XLSX_MARKER_RED)
     marker_format_green = workbook.add_format(XLSX_MARKER_GREEN)
     # ----------------------------------------
-    # Формирование заголовков
+    # Forming headers
     worksheet.write('A1', TABLE_HEADERS[0], heading_format)
     worksheet.write('B1', TABLE_HEADERS[1], heading_format)
     worksheet.write('C1', TABLE_HEADERS[2], heading_format)
     worksheet.write('D1', TABLE_HEADERS[3], heading_format)
     # ----------------------------------------
-    # Ширина столбцов
+    # Column width
     worksheet.set_column('A:A', 20)
     worksheet.set_column('A:B', 30)
     worksheet.set_column('C:C', 20)
