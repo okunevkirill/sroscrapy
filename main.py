@@ -1,5 +1,12 @@
 from sroscrapy import naufor
+from sroscrapy.testing import timer
+
+
+@timer
+def start_naufor():
+    scraper = naufor.NauforScrapper()
+    scraper.run()
+
 
 if __name__ == '__main__':
-    test_var = naufor.NauforScrapper()
-    test_var.run()
+    start_naufor()

@@ -13,7 +13,7 @@ class NauforScrapper(Scrapper):
         self._website = Website(name="НАУФОР", url="https://www.naufor.ru")
         self._file_data = FileData(raw_data_path=raw_data_path, path_to_the_result=path_to_the_result)
 
-    def set_website_url_search(self):
+    def _set_website_url_search(self):
         """
         Установка основного пути парсинга
         """
@@ -34,7 +34,7 @@ class NauforScrapper(Scrapper):
                 break
 
             if not info.strip():
-                info = "Проверок СРО не было"
+                info = self._file_data.MSG_NO_CHECKS_SRO
             if flag_info:
                 result += info.replace('* * *', '').replace('\n\n\n', '')
                 if self.DATE_PHRASE in info:
@@ -58,29 +58,24 @@ class NauforScrapper(Scrapper):
             raise URLError
         return participants
 
-    def _parsing_child(self, url):
+    def _get_content_about_company(self, url):
         """
-        Парсинг дочерних страниц с информацией и датой
+        Получение информации о компании
         """
         if url is None:
-            return "Компании нет в списках членов СРО", ""
+            return self._file_data.MSG_NO_COMPANY, ""
         soup = self.get_soup_page(url)
         if soup is None:
-            return "Не удалось обновить информацию - проверьте адрес", ""
+            return self._file_data.MSG_NO_URL, ""
         else:
-            content, date = self._get_verification_data(soup)
-            return content, date
+            info, date = self._get_verification_data(soup)
+            return info, date
 
-    def _set_company_info(self, companies):
+    def _get_companies_info(self, companies):
         links = [item.href for item in companies]
         with Pool(self._number_of_processes) as prc:
-            content = prc.map(self._parsing_child, links)
-        for idx, company in enumerate(companies):
-            info, date = content[idx]
-            company.info = info
-            if company.is_date_matches(date):
-                company.change_date = True
-            company.date = date
+            companies_info = prc.map(self._get_content_about_company, links)
+        return companies_info
 
     def start_parsing(self):
         """
@@ -88,8 +83,9 @@ class NauforScrapper(Scrapper):
         """
         # Получение списка отслеживаемых компаний
         companies = self._file_data.get_data_from_csv()
-        self.set_website_url_search()
+        self._set_website_url_search()
         print(self._website)
+        print("-" * 42)
         # --------------------
         # Получение всех участников СРО с адресами доп страниц
         soup = self.get_soup_page(self._website.url_search)
@@ -99,6 +95,7 @@ class NauforScrapper(Scrapper):
             print("[*] :: Response from search URL received")
 
         participants = self._get_all_participants(soup)
+        print("[*] :: The list of all SRO participants has been formed")
         # --------------------
         # Установка href для отслеживаемых компаний
         for name, href in participants.items():
@@ -106,18 +103,26 @@ class NauforScrapper(Scrapper):
                 if company.is_name_matches(name):
                     company.href = href
         # --------------------
-        # Изменение на месте информации о компании
-        self._set_company_info(companies)
+        # Получение информации о компании и дате проверок
+        companies_info = self._get_companies_info(companies)
+        for index, company in enumerate(companies):
+            info, date = companies_info[index]
+            company.info = info
+            if company.is_date_matches(date):
+                # Если было дата из файла не соотв. дате на сайте - нужно отразить
+                company.date_changed = True
+            company.date = date
         # --------------------
+        # Сохранение файла
         self._file_data.save_dataframe_xlsx(companies=companies, worksheet_name=self._website.name)
 
     def run(self):
-        print("[!] - Start parsing", "=" * 42, sep="\n")
+        print("[!] :: Start parsing", "=" * 42, sep="\n")
         try:
             self.start_parsing()
         except SroScraperError as err:
             print(err)
-        print("[!] - End of parsing", "=" * 42, sep="\n")
+        print("[!] :: End of parsing", "=" * 42, sep="\n")
 
 
 if __name__ == "__main__":

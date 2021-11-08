@@ -3,23 +3,22 @@
 Basic entities for <sroscrapy>
 """
 import csv
-import os
 
 import requests
 from bs4 import BeautifulSoup
 import xlsxwriter
 
-from .exceptions import *
+from sroscrapy.exceptions import *
 
 
 # --------------------------------------------------------------
 class Company:
-    def __init__(self, name: str, date: str, href: str = None, info: str = None, change_date: bool = False):
+    def __init__(self, name: str, date: str, href: str = None, info: str = None, date_changed: bool = False):
         self.name = name
         self.date = date
         self.href = href
         self.info = info
-        self.change_date = change_date
+        self.change_date = date_changed
 
     def __repr__(self):
         return f"<class: '{self.__class__.__name__}'> Name: '{self.name}. Date: '{self.date}'"
@@ -33,26 +32,23 @@ class Company:
 
 # --------------------------------------------------------------
 class FileData:
+    MSG_NO_COMPANY = "Компании нет в списках членов СРО"
+    MSG_NO_URL = "Не удалось обновить информацию - проверьте адрес"
+    MSG_NO_CHECKS_SRO = "Проверок СРО не было"
     _encoding = "cp1251"
-    _raw_data_path = f"companies.csv"
-    _path_to_the_result = f"scraping_result.xlsx"
     _table_headers = ('Компания', 'Информация о проверках', "Дата последней проверки", 'Адрес источника')
-    _msg_no_url = "Компании нет в списках членов СРО"
 
-    def __init__(self, raw_data_path: str = None, path_to_the_result: str = None):
-        if raw_data_path:
-            self._raw_data_path = raw_data_path
-        if path_to_the_result:
-            self._path_to_the_result = path_to_the_result
+    def __init__(self, raw_data_path: str, path_to_the_result: str):
+        self.raw_data_path = raw_data_path if raw_data_path else "companies.csv"
+        self.path_to_the_result = path_to_the_result if path_to_the_result else "scraping_result.xlsx"
 
     def get_data_from_csv(self, delimiter=";"):
         """
         Возвращает список компаний требующих анализа
         """
-        path = self._raw_data_path
         companies = []
         try:
-            with open(path, 'r', encoding=self._encoding) as csv_file:
+            with open(self.raw_data_path, 'r', encoding=self._encoding) as csv_file:
                 reader = csv.DictReader(csv_file, delimiter=delimiter)
                 for line in reader:
                     name = line[self._table_headers[0]].strip()
@@ -65,8 +61,8 @@ class FileData:
         return companies
 
     def save_dataframe_xlsx(self, companies, worksheet_name: str = 'Лист1'):
-        path = self._path_to_the_result
-        workbook = xlsxwriter.Workbook(path)
+        # path = self.path_to_the_result
+        workbook = xlsxwriter.Workbook(self.path_to_the_result)
         worksheet = workbook.add_worksheet(worksheet_name)
         # ----------------------------------------
         # Adding formatting for xlsx
@@ -75,9 +71,11 @@ class FileData:
             {'bold': True, 'font_color': 'black', 'font_size': '14', 'valign': 'vcenter',
              'align': 'center', 'text_wrap': 'True', 'border': 2}
         )
-        default_format = workbook.add_format({'align': 'left', 'valign': 'vcenter', 'text_wrap': 'True'})
-        marker_format_red = workbook.add_format({"bg_color": 'red', 'align': 'left', 'valign': 'vcenter'})
-        marker_format_green = workbook.add_format({"bg_color": 'green', 'align': 'left', 'valign': 'vcenter'})
+        default_format = workbook.add_format({'align': 'left', 'valign': 'vcenter', 'text_wrap': 'True', 'border': 1})
+        marker_format_red = workbook.add_format(
+            {"bg_color": '#ef8959', 'align': 'left', 'valign': 'vcenter', 'border': 1})
+        marker_format_green = workbook.add_format(
+            {"bg_color": '#57bf45', 'align': 'left', 'valign': 'vcenter', 'border': 1})
         # ----------------------------------------
         # Forming headers
         worksheet.write('A1', self._table_headers[0], heading_format)
@@ -99,9 +97,9 @@ class FileData:
             info = company.info
 
             worksheet.write(row, col, name, default_format)
-            if info in ("Компании нет в списках членов СРО", "Не удалось обновить информацию - проверьте адрес"):
+            if info in (self.MSG_NO_COMPANY, self.MSG_NO_URL):
                 worksheet.write(row, col + 1, info, marker_format_red)
-            elif info == "Проверок СРО не было":
+            elif info == self.MSG_NO_CHECKS_SRO:
                 worksheet.write(row, col + 1, info, marker_format_green)
             else:
                 worksheet.write(row, col + 1, info, default_format)

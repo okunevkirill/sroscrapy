@@ -7,7 +7,7 @@ import sys
 
 from .exceptions import *
 
-__version__ = "0.00.10"
+__version__ = "0.00.11"
 __all__ = [
     "SroScraperError",
     "FileDataError",
