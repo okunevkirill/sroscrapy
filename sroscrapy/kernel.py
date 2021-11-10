@@ -61,7 +61,6 @@ class FileData:
         return companies
 
     def save_dataframe_xlsx(self, companies, worksheet_name: str = 'Лист1'):
-        # path = self.path_to_the_result
         workbook = xlsxwriter.Workbook(self.path_to_the_result)
         worksheet = workbook.add_worksheet(worksheet_name)
         # ----------------------------------------
@@ -105,9 +104,9 @@ class FileData:
                 worksheet.write(row, col + 1, info, default_format)
 
             if company.change_date:
-                worksheet.write(row, col + 2, date, default_format)
-            else:
                 worksheet.write(row, col + 2, date, marker_format_red)
+            else:
+                worksheet.write(row, col + 2, date, default_format)
             worksheet.write(row, col + 3, href, default_format)
             row += 1
         workbook.close()

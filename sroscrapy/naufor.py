@@ -25,24 +25,26 @@ class NauforScrapper(Scrapper):
         self._website.url_search = self._website.get_absolute_url(self._website.url, url_search)
 
     def _get_verification_data(self, soup):
-        result = ''
-        flag_info = False
-        date = ''
-        for string in soup.find_all('tr'):
-            info = string.get_text()
-            if flag_info and self.END_PHRASE in info:
+        info, date = "", ""
+        is_needed_info, is_date = False, False
+        for inner_html in soup.find_all(["th", "td"]):
+            text = inner_html.get_text().strip()
+            if is_date:  # На данной итерации формируется дата окончания последней проверки (может перезаписываться)
+                date = text
+                is_date = False
+            if text.startswith("* * *"):
+                continue
+            elif text.startswith(self.END_PHRASE):  # Вся необходимая информация получена
                 break
-
-            if not info.strip():
-                info = self._file_data.MSG_NO_CHECKS_SRO
-            if flag_info:
-                result += info.replace('* * *', '').replace('\n\n\n', '')
-                if self.DATE_PHRASE in info:
-                    date = info.replace(self.DATE_PHRASE, '').strip()
-
-            if self.START_PHRASE in info:
-                flag_info = True
-        return result, date
+            if is_needed_info:
+                info += text + "\n"
+                if self.DATE_PHRASE in text:  # На следующей итерации формируется дата окончания проверки
+                    is_date = True
+            if text.startswith(self.START_PHRASE):  # Со следующей итерации будет необходимая информация
+                is_needed_info = True
+        if not info.strip():
+            info = self._file_data.MSG_NO_CHECKS_SRO
+        return info, date
 
     def _get_all_participants(self, soup):
         """
@@ -77,7 +79,7 @@ class NauforScrapper(Scrapper):
             companies_info = prc.map(self._get_content_about_company, links)
         return companies_info
 
-    def start_parsing(self):
+    def _start_parsing(self):
         """
         Парсинг основной страницы поиска
         """
@@ -108,9 +110,9 @@ class NauforScrapper(Scrapper):
         for index, company in enumerate(companies):
             info, date = companies_info[index]
             company.info = info
-            if company.is_date_matches(date):
+            if not company.is_date_matches(date):
                 # Если было дата из файла не соотв. дате на сайте - нужно отразить
-                company.date_changed = True
+                company.change_date = True
             company.date = date
         # --------------------
         # Сохранение файла
@@ -119,7 +121,7 @@ class NauforScrapper(Scrapper):
     def run(self):
         print("[!] :: Start parsing", "=" * 42, sep="\n")
         try:
-            self.start_parsing()
+            self._start_parsing()
         except SroScraperError as err:
             print(err)
         print("[!] :: End of parsing", "=" * 42, sep="\n")
